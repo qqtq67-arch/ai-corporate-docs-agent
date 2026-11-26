@@ -1,0 +1,712 @@
+{
+  "name": "Загрузка документов",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Загрузка корпоративных регламентов\n**Маршрут:** форма → проверка PDF/DOCX → Tika/Tesseract OCR → фрагменты → Ollama embedding → Qdrant → итог.\n\n**Новый / Замена:** `document_key` рассчитывается автоматически из *названия и типа* документа. Для замены указывайте те же название и тип; новая редакция сначала записывается и проверяется, прежняя удаляется после успешной записи.\n\n**Среда HOSTKEY:** n8n, Tika с русским OCR, Ollama и Qdrant уже запущены. До первой индексации необходимо наличие коллекции `rag_edu_documents_v1` с векторами размерности **1024**.\n\n**Важное ограничение:** экран формы подтверждает получение файла, **не факт успешной индексации**. Результат и ошибки смотрите в **Executions (Выполнения)**. При сбое может потребоваться очистка неполной новой редакции.\n\n**Для цитирования:** обычная разбивка по символам сама по себе не гарантирует точного определения номера пункта и страницы. Это нужно проверять по реальным регламентам и при необходимости улучшить перед финальной демонстрацией.\n\n*Примечание: заметки описывают логику. Рабочие ноды в этой редакции не изменены.*",
+        "height": 410,
+        "width": 940
+      },
+      "id": "30362b2d-da4d-45c6-affe-b0a9de192914",
+      "name": "Памятка WF-01 v3.2 · общая схема",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "formTitle": "Загрузка корпоративного документа",
+        "formDescription": "Загрузите PDF или DOCX. Для замены существующего документа укажите ТО ЖЕ название и тип, что при первой загрузке. Изменить номер версии можно. Не загружайте конфиденциальные данные в публичную тестовую форму.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "document",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".pdf,.docx",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "operation",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Новый"
+                  },
+                  {
+                    "option": "Замена"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "document_title",
+              "placeholder": "Название документа",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "document_type",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Регламент"
+                  },
+                  {
+                    "option": "Правила лицензирования"
+                  },
+                  {
+                    "option": "Описание продукта"
+                  },
+                  {
+                    "option": "Другое"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "version",
+              "placeholder": "Номер редакции, например 2.1",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "effective_date",
+              "fieldType": "date"
+            }
+          ]
+        },
+        "options": {
+          "path": "edu-rag-document-upload-v3",
+          "respondWithOptions": {
+            "values": {
+              "formSubmittedText": "Документ принят в очередь обработки. Это НЕ подтверждение успешной индексации. Результат смотрите в Executions n8n."
+            }
+          }
+        }
+      },
+      "id": "0a32a440-35f9-4f87-bc50-6e2b39647eca",
+      "name": "01 · Загрузка документа",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        48,
+        1168
+      ],
+      "webhookId": "082cf9d5-ac5c-42ad-8a0f-87b8f17c25b5"
+    },
+    {
+      "parameters": {
+        "jsCode": "const src=$input.first();\nconst f=src.binary?.document||Object.values(src.binary||{})[0];\nif(!f)throw new Error('Файл не получен из формы');\nconst filename=String(f.fileName||'').trim();\nconst ext=filename.toLowerCase().split('.').pop();\nif(!['pdf','docx'].includes(ext))throw new Error('Допустимы только PDF и DOCX');\nif(f.fileSize){const s=String(f.fileSize).trim();const n=parseFloat(s);const factor=/gb/i.test(s)?1024*1024*1024:/mb/i.test(s)?1024*1024:/kb/i.test(s)?1024:1;if(Number.isFinite(n)&&n*factor>15*1024*1024)throw new Error('Учебный лимит файла — 15 МБ');}\nconst m=src.json||{};\nconst operation=String(m.operation||'').trim();\nif(!['Новый','Замена'].includes(operation))throw new Error('Выберите Новый или Замена');\nconst document_title=String(m.document_title||'').trim();\nconst version=String(m.version||'').trim();\nif(!document_title||!version)throw new Error('Укажите название и версию документа');\n// Ключ генерируется автоматически. Для «Замены» название и тип должны совпасть с исходными.\nconst document_type=String(m.document_type||'Другое').trim();\nconst normalize=(s)=>s.normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/\\s+/g,' ').trim();\nconst identity=normalize(document_type)+'|'+normalize(document_title);\nfunction fnv32(t,seed){let h=seed>>>0;for(let i=0;i<t.length;i++)h=Math.imul(h^t.charCodeAt(i),16777619);return (h>>>0).toString(16).padStart(8,'0');}\n// Две независимые 32-битные контрольные суммы: стабильный внутренний идентификатор, а не ручной ввод.\nconst document_key='doc-'+fnv32(identity,2166136261)+fnv32(identity,3339675911);\nreturn [{json:{filename,ext,document_key,operation,document_title,version,document_type,effective_date:String(m.effective_date||''),uploaded_at:new Date().toISOString(),file_size:f.fileSize||null},binary:{document:f}}];"
+      },
+      "id": "d369df81-fb8b-4538-84eb-30144ff9a436",
+      "name": "02 · Проверить файл и метаданные",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        336,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://tika:9998/tika",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "text/plain"
+            },
+            {
+              "name": "X-Tika-OCRLanguage",
+              "value": "rus+eng"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "document",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "c61134aa-ff63-4581-a322-2e759773c481",
+      "name": "03 · Tika: извлечь текст и OCR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        608,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.first().json||{};\nconst meta=$('02 · Проверить файл и метаданные').first().json;\nlet raw=typeof r==='string'?r:String(r.data??r.text??r.body??'');\nraw=raw.replace(/\\r\\n/g,'\\n').replace(/\\u0000/g,'').trim();\nif(raw.length<80)throw new Error('Tika не извлекла достаточно текста: возможен скан без работающего OCR. Проверьте Tesseract и OCR-настройки Tika.');\nif(raw.length>300000)throw new Error('Учебный лимит 300000 символов');\nconst letters=(raw.match(/[\\p{L}\\p{N}]/gu)||[]).length;\nif(letters/raw.length<0.2)throw new Error('Извлечённый текст слишком мало похож на содержательный; нужна ручная проверка OCR');\nreturn [{json:{...meta,raw_text:raw,characters:raw.length,extraction:'Apache Tika; OCR только при настроенном Tesseract',source_page:null}}];"
+      },
+      "id": "920ddadf-df7d-44dd-be0a-c5032ac75aa8",
+      "name": "04 · Проверить извлечённый текст",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/rag_edu_documents_e5_v1/points/count",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  filter: {\n    must: [{\n      key: \"document_key\",\n      match: {\n        value: $('04 · Проверить извлечённый текст').first().json.document_key\n      }\n    }]\n  },\n  exact: true\n}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "c524e990-5641-4751-a0c1-48742534588b",
+      "name": "05 · Qdrant: найти старый документ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const m=$('04 · Проверить извлечённый текст').first().json;\nconst count=Number($input.first().json?.result?.count);\nif(!Number.isFinite(count)||count<0)throw new Error('Не удалось получить число фрагментов из Qdrant');\nif(m.operation==='Новый'&&count!==0)throw new Error('Документ с таким названием и типом уже существует. Выберите «Замена», если это новая редакция.');\nif(m.operation==='Замена'&&count===0)throw new Error('Исходный документ не найден. Для замены укажите ТО ЖЕ название и тип, что при первой загрузке.');\nreturn [{json:{...m,old_chunks:count}}];"
+      },
+      "id": "3f0c94e7-7d71-4b7e-8ad3-dd1e7ac06af6",
+      "name": "06 · Проверить Новый / Замена",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst m = $input.first().json;\nconst raw = m.raw_text;\n\nif (typeof raw !== 'string' || !raw.trim()) {\n  throw new Error('Нет текста документа для разбиения');\n}\n\n// 1. Создаём постоянные идентификаторы документа и редакции\nfunction fnv(t, seed) {\n  let h = seed >>> 0;\n  for (let i = 0; i < t.length; i++) {\n    h = Math.imul(h ^ t.charCodeAt(i), 16777619);\n  }\n  return (h >>> 0).toString(16).padStart(8, '0');\n}\n\nfunction uuid(s) {\n  const h =\n    fnv(s, 2166136261) +\n    fnv(s, 3339675911) +\n    fnv(s, 987654321) +\n    fnv(s, 123456789);\n\n  return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`;\n}\n\nconst document_id = uuid(m.document_key);\nconst revision_id = uuid(\n  m.document_key + '|' + raw + '|' +\n  m.version + '|' + m.uploaded_at\n);\n\n// 2. Настройки размера фрагментов\nconst SIZE = 1200;\nconst OVERLAP = 180;\n\n// 3. Ищем пронумерованные пункты в начале строк\n// Например: 1. Текст, 2.3. Текст, 2.3.1. Текст\nconst headingRe = /^[ \\t]*(\\d+(?:\\.\\d+){0,5})\\.[ \\t]+(?=\\S)/gm;\n\nconst headings = [...raw.matchAll(headingRe)].map(x => ({\n  start: x.index,\n  number: x[1]\n}));\n\n// 4. Разделяем документ по границам найденных пунктов\nconst sections = [];\nlet cursor = 0;\nlet active = null;\n\nfor (const h of headings) {\n  if (h.start > cursor) {\n    sections.push({\n      start: cursor,\n      end: h.start,\n      number: active\n    });\n  }\n\n  cursor = h.start;\n  active = h.number;\n}\n\nif (cursor < raw.length) {\n  sections.push({\n    start: cursor,\n    end: raw.length,\n    number: active\n  });\n}\n\n// 5. Собираем фрагменты с номерами пунктов\nconst chunks = [];\nlet pending = null;\n\nfunction addChunk(start, end, numbers) {\n  const text = raw.slice(start, end).trim();\n  if (!text) return;\n\n  const list = [...new Set(numbers.filter(Boolean))];\n\n  chunks.push({\n    text,\n    offset_start: start,\n    offset_end: end,\n    section_number: list.length === 1 ? list[0] : null,\n    section_numbers: list\n  });\n}\n\nfunction flush() {\n  if (pending) {\n    addChunk(pending.start, pending.end, pending.numbers);\n    pending = null;\n  }\n}\n\nfor (const sec of sections) {\n  if (!raw.slice(sec.start, sec.end).trim()) continue;\n\n  const length = sec.end - sec.start;\n\n  // Длинный пункт делим на части\n  if (length > SIZE) {\n    flush();\n\n    for (let start = sec.start; start < sec.end;) {\n      let end = Math.min(start + SIZE, sec.end);\n\n      if (end < sec.end) {\n        const tail = raw.slice(\n          start + Math.floor(SIZE * 0.65),\n          end\n        );\n\n        const cut = Math.max(\n          tail.lastIndexOf('\\n'),\n          tail.lastIndexOf(' ')\n        );\n\n        if (cut >= 0) {\n          end = start + Math.floor(SIZE * 0.65) + cut + 1;\n        }\n      }\n\n      addChunk(start, end, [sec.number]);\n\n      if (end >= sec.end) break;\n\n      start = Math.max(start + 1, end - OVERLAP);\n    }\n\n  // Первый небольшой пункт\n  } else if (!pending) {\n    pending = {\n      start: sec.start,\n      end: sec.end,\n      numbers: [sec.number]\n    };\n\n  // Объединяем соседние небольшие пункты\n  } else if (sec.end - pending.start <= SIZE) {\n    pending.end = sec.end;\n    pending.numbers.push(sec.number);\n\n  // Готовый фрагмент; начинаем следующий\n  } else {\n    flush();\n\n    pending = {\n      start: sec.start,\n      end: sec.end,\n      numbers: [sec.number]\n    };\n  }\n}\n\nflush();\n\n// 6. Защита от пустого результата и слишком большого документа\nif (!chunks.length || chunks.length > 300) {\n  throw new Error(\n    'Некорректное число чанков: ' + chunks.length\n  );\n}\n\n// 7. Передаём фрагменты следующей ноде\nreturn chunks.map((c, i) => ({\n  json: {\n    id: uuid(revision_id + '|' + i + '|' + c.text),\n\n    document_id,\n    revision_id,\n    document_key: m.document_key,\n\n    operation: m.operation,\n    old_chunks: m.old_chunks,\n\n    filename: m.filename,\n    document_title: m.document_title,\n    document_type: m.document_type,\n    version: m.version,\n    effective_date: m.effective_date,\n    uploaded_at: m.uploaded_at,\n\n    chunk_index: i,\n    total_chunks: chunks.length,\n\n    offset_start: c.offset_start,\n    offset_end: c.offset_end,\n\n    section_number: c.section_number,\n    section_numbers: c.section_numbers,\n\n    text: c.text,\n    source_page: null\n  }\n}));\n"
+      },
+      "id": "ab7336d7-0195-47a6-bc46-440c5bfbf844",
+      "name": "07 · Разбить на фрагменты",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1696,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/embed",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=\n{{ JSON.stringify({\n  model: 'jeffh/intfloat-multilingual-e5-small:q8_0',\n  input: $json.texts.map(text => 'passage: ' + text),\n  keep_alive: '10m'\n}) }}\n",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "id": "b9414a0a-9068-4916-8052-f3175125c9dc",
+      "name": "08 · Ollama: embedding 1024",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2192,
+        1168
+      ],
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\n// Получаем векторы от Ollama\nconst vectors = $input.item.json.embeddings;\n\n// Получаем исходные фрагменты из текущей группы\nconst chunks = $('07А · Сгруппировать фрагменты').item.json.chunks;\n\n// Проверяем соответствие количества векторов и фрагментов\nif (\n  !Array.isArray(vectors) ||\n  vectors.length !== chunks.length\n) {\n  throw new Error(\n    `Несовпадение: ${vectors?.length ?? 0} векторов, ${chunks.length} фрагментов`\n  );\n}\n\n// Создаём точки для Qdrant\nconst points = chunks.map((s, i) => {\n  const vec = vectors[i];\n\n  // E5-small должна возвращать 384 числа\n  if (\n    !Array.isArray(vec) ||\n    vec.length !== 384 ||\n    !vec.every(x =>\n      typeof x === 'number' && Number.isFinite(x)\n    )\n  ) {\n    throw new Error(\n      `Некорректный вектор 384 для фрагмента ${s.chunk_index}`\n    );\n  }\n\n  return {\n    id: s.id,\n    vector: vec,\n    payload: {\n      text: s.text,\n      content: s.text,\n\n      document_id: s.document_id,\n      document_key: s.document_key,\n      revision_id: s.revision_id,\n\n      source: s.filename,\n      document_title: s.document_title,\n      document_type: s.document_type,\n      version: s.version,\n      effective_date: s.effective_date,\n      uploaded_at: s.uploaded_at,\n\n      chunk_index: s.chunk_index,\n      total_chunks: s.total_chunks,\n      offset_start: s.offset_start,\n      offset_end: s.offset_end,\n\n      // Номера разделов для цитирования\n      section_number: s.section_number,\n      section_numbers: s.section_numbers,\n\n      page: null\n    }\n  };\n});\n\n// Передаём все точки группы в следующую ноду\nreturn {\n  json: {\n    points\n  }\n};\n\n"
+      },
+      "id": "01b4df7d-3ed6-4e90-8af7-9a5e6327838e",
+      "name": "09 · Подготовить точку Qdrant",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2448,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://qdrant:6333/collections/rag_edu_documents_e5_v1/points?wait=true",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=\n{{ JSON.stringify({\n  points: $json.points\n}) }}\n",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "4b67eb9c-45e8-430c-82bd-71ee972f76a7",
+      "name": "10 · Записать точку Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2720,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst responses = $input.all();\n\n// Исходные фрагменты документа\nconst chunks = $('07 · Разбить на фрагменты').all();\n\n// Группы, отправленные в Ollama и Qdrant\nconst groups = $('07А · Сгруппировать фрагменты').all();\n\n// Проверяем количество ответов Qdrant\nif (responses.length !== groups.length) {\n  throw new Error(\n    `Qdrant вернул ${responses.length} ответов, ожидалось ${groups.length}`\n  );\n}\n\n// Проверяем подтверждение записи каждой группы\nlet chunksIndexed = 0;\n\nfor (let i = 0; i < responses.length; i++) {\n  const response = responses[i].json;\n\n  if (response?.status !== 'ok') {\n    throw new Error(\n      `Qdrant не подтвердил запись группы № ${i + 1}`\n    );\n  }\n\n  const groupChunks = groups[i].json?.chunks;\n\n  if (!Array.isArray(groupChunks) || groupChunks.length === 0) {\n    throw new Error(\n      `Отсутствуют исходные фрагменты группы № ${i + 1}`\n    );\n  }\n\n  chunksIndexed += groupChunks.length;\n}\n\n// Проверяем полноту обработки документа\nif (chunksIndexed !== chunks.length) {\n  throw new Error(\n    `Обработано ${chunksIndexed} фрагментов из ${chunks.length}`\n  );\n}\n\nconst x = chunks[0].json;\n\n// Передаём метаданные следующей ноде\nreturn [{\n  json: {\n    document_key: x.document_key,\n    document_id: x.document_id,\n    revision_id: x.revision_id,\n    operation: x.operation,\n    filename: x.filename,\n    document_title: x.document_title,\n    version: x.version,\n    old_chunks: x.old_chunks,\n    chunks_indexed: chunksIndexed\n  }\n}];\n"
+      },
+      "id": "b2c90511-94d7-4802-98e3-1dcf520b6a11",
+      "name": "11 · Проверить ответы записи",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2992,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/rag_edu_documents_e5_v1/points/count",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  filter: {\n    must: [\n      {\n        key: \"document_key\",\n        match: {\n          value: $('11 · Проверить ответы записи').first().json.document_key\n        }\n      },\n      {\n        key: \"revision_id\",\n        match: {\n          value: $('11 · Проверить ответы записи').first().json.revision_id\n        }\n      }\n    ]\n  },\n  exact: true\n}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "8313a476-4a90-4b63-bbb8-45e707bd7902",
+      "name": "12 · Qdrant: посчитать новую редакцию",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3264,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const m=$('11 · Проверить ответы записи').first().json;\nconst got=Number($input.first().json?.result?.count);\nif(got!==m.chunks_indexed)throw new Error(`Qdrant: новая редакция имеет ${got} точек, ожидалось ${m.chunks_indexed}. Старые не удалены.`);\nreturn [{json:{...m,verified_chunks:got}}];"
+      },
+      "id": "557247a7-af59-4687-b9a9-1f83c29934f5",
+      "name": "13 · Проверить полноту новой редакции",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3536,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "1b53690b-f14e-42d0-a25c-a071457e5092",
+              "leftValue": "={{ $json.operation }}",
+              "rightValue": "Замена",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cddf3c8d-2845-4272-896c-09ae04fa7ee1",
+      "name": "14 · Это замена?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3808,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/rag_edu_documents_e5_v1/points/delete?wait=true",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({filter:{must:[{key:\"document_key\",match:{value:$(\"13 · Проверить полноту новой редакции\").first().json.document_key}}],must_not:[{key:\"revision_id\",match:{value:$(\"13 · Проверить полноту новой редакции\").first().json.revision_id}}]}}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "14abcab4-7430-4f5a-8e04-6d61411f17bb",
+      "name": "15 · Удалить старые редакции",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4080,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst m = $('13 · Проверить полноту новой редакции').first().json;\n\nreturn [{\n  json: {\n    ok: true,\n    operation: m.operation,\n    document_key: m.document_key,\n    filename: m.filename,\n    version: m.version,\n    chunks_indexed: m.verified_chunks,\n    collection: 'rag_edu_documents_e5_v1',\n    message: 'Новый документ успешно проиндексирован'\n  }\n}];\n"
+      },
+      "id": "ff806f27-7974-439f-9688-44cf47eb6973",
+      "name": "16 · Итог: новый документ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4368,
+        1264
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst m = $('13 · Проверить полноту новой редакции').first().json;\n\n// Получаем ответ Qdrant после удаления старой редакции\nconst response = $input.first().json;\n\n// Проверяем подтверждение удаления\nif (response.status !== 'ok') {\n  throw new Error(\n    'Qdrant не подтвердил удаление предыдущей редакции документа'\n  );\n}\n\n// Формируем итоговый результат\nreturn [{\n  json: {\n    ok: true,\n    operation: m.operation,\n    document_key: m.document_key,\n    filename: m.filename,\n    version: m.version,\n    chunks_indexed: m.verified_chunks,\n    previous_chunks: m.old_chunks,\n    collection: 'rag_edu_documents_e5_v1',\n    message: 'Новая редакция успешно проиндексирована, предыдущая удалена'\n  }\n}];\n"
+      },
+      "id": "e37959c5-16aa-42e4-97c9-d24caf1e3a7e",
+      "name": "17 · Итог: замена документа",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4368,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 01–02 · Входные данные\n**Что делает:** пользователь выбирает PDF или DOCX и заполняет метаданные документа; проверяются формат, размер и обязательные поля.\n\n**Зачем:** не допустить неподдерживаемый или некорректный файл до распознавания.\n\n**Важно:** форма не доказывает, что документ уже сохранён в базе. Следите за результатом выполнения.",
+        "height": 310,
+        "width": 500
+      },
+      "id": "3e285658-7056-44d2-b4e5-cf6b1bdb3e20",
+      "name": "Заметка 01 · Вход и проверки",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        48,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 03–04 · Извлечение текста\n**Tika** извлекает текст из PDF/DOCX. **Tesseract OCR** распознаёт текст сканированных страниц.\n\nEndpoint: `http://tika:9998/tika`.\nЗаголовки: `Accept: text/plain` и `X-Tika-OCRLanguage: rus+eng`.\n\nСледующая нода проверяет, что распознанный текст пригоден для обработки.\n\n**Риск:** у сканов могут быть ошибки распознавания; проверять на примерах.",
+        "height": 310,
+        "width": 500
+      },
+      "id": "5c5ce2f5-93d9-4484-ad4a-44ea04f814ec",
+      "name": "Заметка 02 · Tika и OCR",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        608,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 05–06 · Защита редакций\nQdrant проверяет существование документа по автоматически рассчитанному `document_key`.\n\n**Новый:** не должен случайно дублировать имеющийся документ.\n**Замена:** требует того же названия и типа, что у прежней редакции.\n\n**Зачем:** новая редакция не должна незаметно смешиваться со старой.",
+        "height": 310,
+        "width": 500
+      },
+      "id": "4f583091-a055-4b36-add0-4f62f6ebef06",
+      "name": "Заметка 03 · Новый или Замена",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1152,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 07–09 · Подготовка поиска\nТекст делится на **фрагменты (чанки)** с перекрытием. Для каждого фрагмента Ollama создаёт embedding — числовой вектор смыслового содержания.\n\nМодель: `qwen3-embedding:0.6b`.\nРазмер вектора: **1024**.\n\n**Важно:** разбиение может разрезать пункт регламента; качество цитат и ссылок необходимо протестировать.",
+        "height": 310,
+        "width": 500
+      },
+      "id": "8102373f-8dea-4945-885d-15bc36202785",
+      "name": "Заметка 04 · Чанки и векторы",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 10–11 · Сохранение знаний\nКаждый фрагмент с вектором и метаданными записывается в коллекцию `rag_edu_documents_v1`.\n\nМетаданные нужны для указания источника, документа и редакции в будущих ответах.\n\n**Проверка:** успешный HTTP-ответ по каждой записи; ошибка должна быть заметна в **Executions**.",
+        "height": 310,
+        "width": 500
+      },
+      "id": "243ed4f6-5524-4b9b-af6f-0c90d8b27596",
+      "name": "Заметка 05 · Запись в Qdrant",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2256,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 12–14 · Контроль результата\nСчитаем записанные фрагменты новой редакции и сверяем их ожидаемое количество.\n\n**Зачем:** не удалять старую редакцию при неполной индексации новой.\n\nДалее нода **IF (Если)** разделяет операции «Новый» и «Замена».",
+        "height": 310,
+        "width": 500
+      },
+      "id": "2740a9f1-4e3a-4a50-a9a9-1fe3d1f63417",
+      "name": "Заметка 06 · Проверка полноты",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3024,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 15–17 · Итог индексации\n**Замена:** старая редакция удаляется после успешной проверки новой.\n**Новый:** возвращается результат загрузки без удаления старых документов.\n\n**Ограничения:** ошибки Code/HTTP-нод останавливают выполнение; отдельное пользовательское уведомление об успешной/неуспешной индексации ещё не реализовано.\n\nПри ошибке проверяйте **Executions** и состояние Qdrant перед повторной загрузкой.",
+        "height": 310,
+        "width": 500
+      },
+      "id": "b126e54e-163a-43fc-8780-1e54fa3adcd5",
+      "name": "Заметка 07 · Завершение и ошибки",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3568,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst chunks = $input.all().map(item => item.json);\nconst batchSize = 5;\nconst result = [];\n\nfor (let i = 0; i < chunks.length; i += batchSize) {\n  const batch = chunks.slice(i, i + batchSize);\n\n  result.push({\n    json: {\n      batch_index: result.length,\n      texts: batch.map(chunk => chunk.text),\n      chunks: batch\n    }\n  });\n}\n\nreturn result;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        1168
+      ],
+      "id": "0d9ae1f0-3821-4efb-9306-f6f19f2d8ce3",
+      "name": "07А · Сгруппировать фрагменты"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "01 · Загрузка документа": {
+      "main": [
+        [
+          {
+            "node": "02 · Проверить файл и метаданные",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 · Проверить файл и метаданные": {
+      "main": [
+        [
+          {
+            "node": "03 · Tika: извлечь текст и OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 · Tika: извлечь текст и OCR": {
+      "main": [
+        [
+          {
+            "node": "04 · Проверить извлечённый текст",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 · Проверить извлечённый текст": {
+      "main": [
+        [
+          {
+            "node": "05 · Qdrant: найти старый документ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 · Qdrant: найти старый документ": {
+      "main": [
+        [
+          {
+            "node": "06 · Проверить Новый / Замена",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06 · Проверить Новый / Замена": {
+      "main": [
+        [
+          {
+            "node": "07 · Разбить на фрагменты",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 · Разбить на фрагменты": {
+      "main": [
+        [
+          {
+            "node": "07А · Сгруппировать фрагменты",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08 · Ollama: embedding 1024": {
+      "main": [
+        [
+          {
+            "node": "09 · Подготовить точку Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "09 · Подготовить точку Qdrant": {
+      "main": [
+        [
+          {
+            "node": "10 · Записать точку Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10 · Записать точку Qdrant": {
+      "main": [
+        [
+          {
+            "node": "11 · Проверить ответы записи",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11 · Проверить ответы записи": {
+      "main": [
+        [
+          {
+            "node": "12 · Qdrant: посчитать новую редакцию",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12 · Qdrant: посчитать новую редакцию": {
+      "main": [
+        [
+          {
+            "node": "13 · Проверить полноту новой редакции",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13 · Проверить полноту новой редакции": {
+      "main": [
+        [
+          {
+            "node": "14 · Это замена?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "15 · Удалить старые редакции": {
+      "main": [
+        [
+          {
+            "node": "17 · Итог: замена документа",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "14 · Это замена?": {
+      "main": [
+        [
+          {
+            "node": "15 · Удалить старые редакции",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "16 · Итог: новый документ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07А · Сгруппировать фрагменты": {
+      "main": [
+        [
+          {
+            "node": "08 · Ollama: embedding 1024",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {},
+  "nodeGroups": [],
+  "tags": []
+}
