@@ -14,7 +14,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst mode = 'send';\nconst request_id = '0';\n\nconst expert_answer = '';\n\nif (!['send', 'reply', 'receive'].includes(mode)) {\n  throw Error('Неверный режим');\n}\n\nif (!/^[0-9]+$/.test(request_id)) {\n  throw Error('Укажите номер заявки');\n}\n\nif (mode === 'reply' &&\n    (!expert_answer.trim() || expert_answer.length > 2000)) {\n  throw Error('Введите разъяснение до 2000 символов');\n}\n\nreturn [{\n  json: {\n    mode,\n    request_id,\n    expert_answer: expert_answer.trim()\n  }\n}];\n"
+        "jsCode": "\nconst mode = 'receive';\nconst request_id = '0';\n\nconst expert_answer = '';\n\nif (!['send', 'reply', 'receive'].includes(mode)) {\n  throw Error('Неверный режим');\n}\n\nif (!/^[0-9]+$/.test(request_id)) {\n  throw Error('Укажите номер заявки');\n}\n\nif (mode === 'reply' &&\n    (!expert_answer.trim() || expert_answer.length > 2000)) {\n  throw Error('Введите разъяснение до 2000 символов');\n}\n\nreturn [{\n  json: {\n    mode,\n    request_id,\n    expert_answer: expert_answer.trim()\n  }\n}];\n"
       },
       "name": "02 Режим работы",
       "type": "n8n-nodes-base.code",
@@ -142,8 +142,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        688,
-        704
+        912,
+        880
       ],
       "id": "1ba50c76-9010-45f9-a7dc-a0840682c4e1"
     },
@@ -159,8 +159,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        896,
-        544
+        1104,
+        688
       ],
       "id": "27e31b1f-1931-4a04-be8c-0028e9a93baa"
     },
@@ -179,8 +179,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        1120,
-        544
+        1328,
+        688
       ],
       "id": "a2302b53-5eb0-4ca1-820e-d560a509cea3"
     },
@@ -195,8 +195,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        1344,
-        800
+        1712,
+        960
       ],
       "id": "55526ec7-269d-43df-85a7-922b20cc3702"
     },
@@ -208,8 +208,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1568,
-        800
+        1936,
+        960
       ],
       "id": "a05dbb71-3789-4fef-86e2-83cd25e91df3"
     },
@@ -224,8 +224,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        1776,
-        800
+        2144,
+        960
       ],
       "id": "3dff8dd3-7abf-44be-9894-1871132a76ae"
     },
@@ -237,8 +237,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2000,
-        800
+        2368,
+        960
       ],
       "id": "8befd253-5c74-4b90-88d7-8f9f973c6c44"
     },
@@ -254,8 +254,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2224,
-        800
+        2592,
+        960
       ],
       "id": "b58a44fe-0d87-4739-ad4e-71e471e4dce4"
     },
@@ -299,13 +299,256 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        1344,
-        400
+        1600,
+        336
       ],
       "id": "d4d052b7-a83f-4fa4-b376-5ae65dc89b69"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "308ad03a-6e00-41f2-8224-21b27b400b5c",
+      "name": "15 Каждую минуту",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH candidate AS (SELECT request_id FROM rag_quality_outbox WHERE status='pending' ORDER BY created_at,request_id LIMIT 1 FOR UPDATE SKIP LOCKED) UPDATE rag_quality_outbox q SET status='sending' FROM candidate c WHERE q.request_id=c.request_id AND q.status='pending' RETURNING q.request_id,q.question,q.email;",
+        "options": {}
+      },
+      "id": "125cd7ba-a11f-4e03-b3ac-47657d4b100d",
+      "name": "16 Взять следующую заявку",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        256,
+        1184
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mailpit:8025/api/v1/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({From:{Email:\"assistant@example.test\"},To:[{Email:\"quality@example.test\"}],Cc:[{Email:\"employee@example.test\"}],Subject:\"[RAG-\"+$json.request_id+\"] Запрос в службу качества\",Text:\"Обращение №\"+$json.request_id+\"\\nВопрос: \"+$json.question+\"\\nПросим предоставить разъяснение. Ответ: тема [RAG-\"+$json.request_id+\"] Ответ эксперта.\"}) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "14cd2670-9311-4ca0-8c7d-17f02e44d190",
+      "name": "17 Автоотправка письма",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        720,
+        1184
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE rag_quality_outbox SET status='sent' WHERE request_id=$1 AND status='sending' RETURNING request_id,status;",
+        "options": {
+          "queryReplacement": "={{ [$('16 Взять следующую заявку').first().json.request_id] }}"
+        }
+      },
+      "id": "028b7937-547a-4d96-bc49-8eb9f66bc896",
+      "name": "18 Подтвердить отправку",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        960,
+        1184
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT request_id FROM rag_quality_outbox WHERE status='sent' ORDER BY created_at,request_id;",
+        "options": {}
+      },
+      "id": "7cd8950b-1e99-4c5e-88dc-58d7f57fe769",
+      "name": "19 Ожидающие ответ",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        272,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'http://mailpit:8025/api/v1/search?limit=50&query=' + encodeURIComponent('from:quality@example.test to:assistant@example.test subject:RAG-' + $json.request_id) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "e1fb1657-8e4b-4001-9f39-991442962177",
+      "name": "20 Поиск ответов по заявкам",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        736,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allowed=new Set($('19 Ожидающие ответ').all().map(x=>String(x.json.request_id)));const out=new Map();for(const item of $input.all()){const messages=item.json.messages;if(!Array.isArray(messages))throw Error('Некорректный ответ Mailpit');for(const m of messages){const match=String(m.Subject??'').match(/^\\[RAG-(\\d+)\\] Ответ эксперта$/);if(!match||!allowed.has(match[1])||!m.ID||String(m.From?.Address??'').toLowerCase()!=='quality@example.test'||!(m.To??[]).some(a=>String(a.Address??'').toLowerCase()==='assistant@example.test'))continue;if(!out.has(match[1]))out.set(match[1],{json:{request_id:match[1],message_id:m.ID}});}}return [...out.values()];"
+      },
+      "id": "022267e2-735b-429e-bd11-43a9ae9a5d57",
+      "name": "21 Отбор писем эксперта",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'http://mailpit:8025/api/v1/message/' + encodeURIComponent($json.message_id) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "afd53a7a-4e21-4880-9cc1-7a5c99a988e9",
+      "name": "22 Прочитать ответы",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1216,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ids=new Set($('21 Отбор писем эксперта').all().map(x=>String(x.json.request_id)));const out=[];for(const item of $input.all()){const m=item.json;const match=String(m.Subject??'').match(/^\\[RAG-(\\d+)\\] Ответ эксперта$/);const answer=String(m.Text??'').trim();if(!match||!ids.has(match[1])||String(m.From?.Address??'').toLowerCase()!=='quality@example.test'||!(m.To??[]).some(a=>String(a.Address??'').toLowerCase()==='assistant@example.test')||!answer||answer.length>2000)continue;out.push({json:{request_id:match[1],expert_answer:answer}});}return out;"
+      },
+      "id": "4c63d464-8a40-4892-a616-38b2dd9e1b9b",
+      "name": "23 Проверить ответы",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE rag_quality_outbox SET expert_answer=$2,status='answered',answered_at=now() WHERE request_id=$1 AND status='sent' RETURNING request_id,status,answered_at;",
+        "options": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.request_id,$json.expert_answer] }}"
+        }
+      },
+      "id": "12f60651-10a7-460c-a561-57672a9bbc4d",
+      "name": "24 Сохранить ответы",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1696,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Автоматический цикл Mailpit\nКаждую минуту: одна pending-заявка резервируется атомарно; ответ ищется для sent. Ошибка отправки оставляет sending для ручной сверки, чтобы не дублировать письма. Только локальные тестовые адреса. Не промышленная почта.",
+        "height": 192,
+        "width": 1250
+      },
+      "id": "18733822-4ede-4c90-a9ef-0a9042fd5dc6",
+      "name": "Автоматический цикл",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ typeof $json.request_id === 'string' && /^[0-9]+$/.test($json.request_id) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "887ee918-f7a1-4d16-b77b-124c6961d02c",
+      "name": "16а Есть заявка",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        1184
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ typeof $json.request_id === 'string' && /^[0-9]+$/.test($json.request_id) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7c9e1ce2-7e49-4396-9112-2b350b8d9aa8",
+      "name": "19а Есть ожидающие",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        496,
+        1536
+      ]
     }
   ],
-  "pinData": {},
   "connections": {
     "01 Ручной запуск": {
       "main": [
@@ -398,17 +641,6 @@
         ]
       ]
     },
-    "09 Отправить ответ эксперта": {
-      "main": [
-        [
-          {
-            "node": "10 Найти письмо эксперта",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "10 Найти письмо эксперта": {
       "main": [
         [
@@ -452,13 +684,186 @@
           }
         ]
       ]
+    },
+    "15 Каждую минуту": {
+      "main": [
+        [
+          {
+            "node": "16 Взять следующую заявку",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "19 Ожидающие ответ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "17 Автоотправка письма": {
+      "main": [
+        [
+          {
+            "node": "18 Подтвердить отправку",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "20 Поиск ответов по заявкам": {
+      "main": [
+        [
+          {
+            "node": "21 Отбор писем эксперта",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "21 Отбор писем эксперта": {
+      "main": [
+        [
+          {
+            "node": "22 Прочитать ответы",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "22 Прочитать ответы": {
+      "main": [
+        [
+          {
+            "node": "23 Проверить ответы",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "23 Проверить ответы": {
+      "main": [
+        [
+          {
+            "node": "24 Сохранить ответы",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "16 Взять следующую заявку": {
+      "main": [
+        [
+          {
+            "node": "16а Есть заявка",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "16а Есть заявка": {
+      "main": [
+        [
+          {
+            "node": "17 Автоотправка письма",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "19 Ожидающие ответ": {
+      "main": [
+        [
+          {
+            "node": "19а Есть ожидающие",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "19а Есть ожидающие": {
+      "main": [
+        [
+          {
+            "node": "20 Поиск ответов по заявкам",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "active": false,
+  "nodeGroups": [
+    {
+      "id": "b90824d4-95be-498f-9733-e8511aa2b334",
+      "name": "Ручная отправка",
+      "nodeNames": [
+        "04 Зарезервировать заявку",
+        "05 Письмо в службу качества",
+        "06 Отметить отправку"
+      ],
+      "description": "Резервирование, доставка и подтверждение отправки."
+    },
+    {
+      "id": "683a17d5-c3b5-4a1c-b9fd-e28dee739afe",
+      "name": "Имитация эксперта",
+      "nodeNames": [
+        "08 Проверить заявку",
+        "09 Отправить ответ эксперта"
+      ],
+      "description": "Только демонстрационное письмо от условного эксперта."
+    },
+    {
+      "id": "ab1860e0-c348-4ecb-b5a6-2f0a55fe6b36",
+      "name": "Ручной приём",
+      "nodeNames": [
+        "10 Найти письмо эксперта",
+        "11 Проверить отправителя и тему",
+        "12 Прочитать письмо",
+        "13 Проверить текст разъяснения",
+        "14 Сохранить разъяснение"
+      ],
+      "description": "Проверка и запись одного экспертного ответа."
+    },
+    {
+      "id": "1c40e384-02d9-456b-a3ea-af3bb31387ec",
+      "name": "Автоматическая отправка",
+      "nodeNames": [
+        "16 Взять следующую заявку",
+        "16а Есть заявка",
+        "17 Автоотправка письма",
+        "18 Подтвердить отправку"
+      ],
+      "description": "Атомарный захват одной новой заявки и локальная доставка."
+    },
+    {
+      "id": "9383e139-f39f-4dbf-88ec-a0b43b76f0d4",
+      "name": "Автоматический приём",
+      "nodeNames": [
+        "19 Ожидающие ответ",
+        "19а Есть ожидающие",
+        "20 Поиск ответов по заявкам",
+        "21 Отбор писем эксперта",
+        "22 Прочитать ответы",
+        "23 Проверить ответы",
+        "24 Сохранить ответы"
+      ],
+      "description": "Поиск писем по ожидающим заявкам, проверка и запись."
+    }
+  ],
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "nodeGroups": [],
+  "active": false,
+  "pinData": {},
   "tags": []
 }
