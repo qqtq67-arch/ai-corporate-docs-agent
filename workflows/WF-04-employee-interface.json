@@ -1,0 +1,76 @@
+{
+  "name": "WF-04 — Веб-интерфейс сотрудника",
+  "nodes": [
+    {
+      "id": "980d4f14-0d82-4b2b-bf29-ab2cbc1b393e",
+      "name": "01 Страница сотрудника",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "corporate-assistant",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "19ca1365-848b-4005-922f-cd3c84b6d5b2",
+      "name": "02 Интерфейс помощника",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        320,
+        0
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!doctype html>\n<html lang=\"ru\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Корпоративный помощник</title>\n<style>\n*{box-sizing:border-box}body{margin:0;background:#f0f4f8;color:#18304b;font:16px/1.5 system-ui,sans-serif}main{max-width:860px;margin:32px auto;padding:0 16px}header{background:#173b65;color:white;padding:24px;border-radius:16px 16px 0 0}h1{margin:0;font-size:25px}header p{margin:4px 0 0;color:#cbdcee}.panel{background:white;padding:20px;border-radius:0 0 16px 16px;box-shadow:0 8px 32px #173b6510}label{display:block;font-weight:600;margin:12px 0 5px}input,textarea{font:inherit;width:100%;padding:12px;border:1px solid #bdcada;border-radius:9px}textarea{resize:vertical;min-height:88px}button{font:inherit;font-weight:600;border:0;border-radius:9px;padding:11px 18px;background:#173b65;color:white;cursor:pointer}button.secondary{background:#e9eef5;color:#173b65}button:disabled{opacity:.5;cursor:wait}.actions{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}#chat{min-height:180px;max-height:55vh;overflow:auto;padding:10px 0;display:flex;flex-direction:column;gap:10px}.message{padding:13px 16px;border-radius:12px;background:#edf3fa;white-space:pre-wrap;overflow-wrap:anywhere}.user{align-self:flex-end;background:#173b65;color:white;max-width:90%}.assistant{border:1px solid #dbe5ef;background:#fafcff}.meta,small{font-size:13px;color:#536b82}details{margin-top:10px;border-top:1px solid #dbe5ef;padding-top:8px}summary{cursor:pointer;font-weight:600}details p{font-size:14px;white-space:pre-wrap}.notice{background:#fff6df;border:1px solid #e6d7aa;border-radius:9px;padding:10px;font-size:13px}#status{min-height:24px;margin:8px 0}footer{font-size:12px;color:#536b82;margin-top:12px;text-align:center}\n</style></head><body><main><header><h1>Корпоративный помощник</h1><p>Ответы по регламентам · источники · служба качества</p></header><section class=\"panel\">\n<div class=\"notice\">Конкурсный стенд ИИкузница. Только обезличенные тестовые сведения. Не вводите конфиденциальные данные: генерация ответа использует внешний API.</div>\n<label for=\"key\">Ключ доступа к демонстрации</label><input id=\"key\" type=\"password\" autocomplete=\"off\" placeholder=\"Введите предоставленный ключ\" maxlength=\"256\"><small>Ключ хранится только в памяти этой страницы.</small>\n<div id=\"chat\" role=\"log\" aria-live=\"polite\"><div class=\"message assistant\">Здравствуйте! Задайте вопрос по корпоративным регламентам. При необходимости я уточню детали или передам обращение в службу качества.</div></div>\n<form id=\"form\"><label for=\"q\">Ваш вопрос</label><textarea id=\"q\" maxlength=\"2000\" required placeholder=\"Например, кому разрешён доступ к сайту проекта?\"></textarea><div class=\"actions\"><button id=\"send\" type=\"submit\">Отправить вопрос</button><button class=\"secondary\" id=\"reset\" type=\"button\">Новый диалог</button></div></form><p id=\"status\" role=\"status\" class=\"meta\"></p>\n</section><footer>ИИкузница 2026 · Демонстрационный прототип</footer></main>\n<script>\nconst el=id=>document.getElementById(id), chat=el('chat'), q=el('q'), key=el('key'), send=el('send'), status=el('status');let session='',busy=false;\nfunction add(text,kind){const d=document.createElement('div');d.className='message '+kind;d.textContent=text;chat.appendChild(d);chat.scrollTop=chat.scrollHeight;return d}\nfunction sources(d,items){for(const s of Array.isArray(items)?items:[]){const details=document.createElement('details'), title=document.createElement('summary'), p=document.createElement('p');title.textContent='['+s.id+'] '+(s.document||s.name||'Источник')+(s.section?' · '+s.section:'')+(s.kind==='expert'?' · разъяснение':'');p.textContent=s.excerpt||'';details.append(title,p);d.appendChild(details)}}\nel('reset').onclick=()=>{if(busy)return;session='';chat.replaceChildren();add('Начат новый диалог. Задайте вопрос.','assistant');status.textContent='';q.focus()};\nel('form').onsubmit=async e=>{e.preventDefault();if(busy)return;const question=q.value.trim(), access=key.value.trim();if(!question||!access){status.textContent='Введите вопрос и ключ доступа.';return}busy=true;send.disabled=true;el('reset').disabled=true;key.disabled=true;add(question,'user');q.value='';status.textContent='Ищу ответ в регламентах…';try{const r=await fetch('https://YOUR-N8N-HOST.example/webhook/corporate-qa-v3',{method:'POST',credentials:'omit',headers:{'Content-Type':'application/json','X-Demo-Key':access},body:JSON.stringify({question,session_id:session})});if(r.status===401||r.status===403)throw Error('Проверьте ключ доступа.');const data=await r.json();if(!r.ok||data.ok===false)throw Error(data.answer||'Запрос не выполнен.');session=data.session_id||session;const d=add(data.answer||'Ответ отсутствует.','assistant');sources(d,data.sources);const meta=document.createElement('div');meta.className='meta';meta.textContent=(data.status==='clarify'?'Требуется уточнение':data.status==='escalation'?'Обращение №'+data.request_id+' · '+(data.quality_status==='queued'?'поставлено в очередь':'зарегистрировано'):data.status==='out_of_scope'?'Вне области регламентов':'Ответ получен')+(Number.isFinite(data.elapsed_ms)?' · '+(data.elapsed_ms/1000).toFixed(2)+' с':'');d.appendChild(meta);chat.scrollTop=chat.scrollHeight;status.textContent='';}catch(err){add('Ошибка: '+err.message,'assistant');q.value=question;status.textContent='Повторите запрос после проверки доступа или соединения.'}finally{busy=false;send.disabled=false;el('reset').disabled=false;key.disabled=false;q.focus()}};\n</script></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "X-Robots-Tag",
+                "value": "noindex, nofollow"
+              },
+              {
+                "name": "Referrer-Policy",
+                "value": "no-referrer"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "01 Страница сотрудника": {
+      "main": [
+        [
+          {
+            "node": "02 Интерфейс помощника",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}
