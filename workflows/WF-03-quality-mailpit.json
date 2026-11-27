@@ -1,0 +1,464 @@
+{
+  "name": "WF-03 — Служба качества (Mailpit demo)",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "01 Ручной запуск",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        608
+      ],
+      "id": "7cb50b48-c228-4c6d-a001-1be898025209"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst mode = 'send';\nconst request_id = '0';\n\nconst expert_answer = '';\n\nif (!['send', 'reply', 'receive'].includes(mode)) {\n  throw Error('Неверный режим');\n}\n\nif (!/^[0-9]+$/.test(request_id)) {\n  throw Error('Укажите номер заявки');\n}\n\nif (mode === 'reply' &&\n    (!expert_answer.trim() || expert_answer.length > 2000)) {\n  throw Error('Введите разъяснение до 2000 символов');\n}\n\nreturn [{\n  json: {\n    mode,\n    request_id,\n    expert_answer: expert_answer.trim()\n  }\n}];\n"
+      },
+      "name": "02 Режим работы",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        608
+      ],
+      "id": "8e2b05b9-fb55-4012-a373-8025eb0363c8"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b0eec645-829b-4c70-8e20-22d3fd746578",
+              "leftValue": "={{ $json.mode === 'send' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "03 Отправить заявку?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        608
+      ],
+      "id": "0bb0668f-bf97-4dd9-9489-6f3810538130"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH q AS (UPDATE rag_quality_outbox SET status='sending' WHERE request_id=$1 AND status='pending' RETURNING request_id,question,email) SELECT * FROM q;",
+        "options": {
+          "queryReplacement": "={{ [$json.request_id] }}"
+        }
+      },
+      "name": "04 Зарезервировать заявку",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        688,
+        304
+      ],
+      "id": "a8ed7ff5-554f-4755-b91c-7bbf334034c9"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mailpit:8025/api/v1/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({From:{Email:\"assistant@example.test\"},To:[{Email:\"quality@example.test\"}],Cc:[{Email:\"employee@example.test\"}],Subject:\"[RAG-\"+$json.request_id+\"] Запрос в службу качества\",Text:\"Обращение №\"+$json.request_id+\"\\nВопрос: \"+$json.question+\"\\nПросим предоставить разъяснение. Ответ: тема [RAG-\"+$json.request_id+\"] Ответ эксперта.\"}) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "name": "05 Письмо в службу качества",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        304
+      ],
+      "id": "54803b5a-12af-49a4-80c9-31e833dcc8f9"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE rag_quality_outbox SET status='sent' WHERE request_id=$1 AND status='sending' RETURNING request_id,status;",
+        "options": {
+          "queryReplacement": "={{ [$('04 Зарезервировать заявку').first().json.request_id] }}"
+        }
+      },
+      "name": "06 Отметить отправку",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1120,
+        304
+      ],
+      "id": "7a34dc2f-cb60-48a3-8eb7-2713596d2668"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2828ee7d-7b04-4d67-b972-f574ea48d4e7",
+              "leftValue": "={{ $json.mode === 'reply' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "07 Тестовое письмо эксперта?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        688,
+        704
+      ],
+      "id": "1ba50c76-9010-45f9-a7dc-a0840682c4e1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT request_id FROM rag_quality_outbox WHERE request_id=$1 AND status='sent';",
+        "options": {
+          "queryReplacement": "={{ [$json.request_id] }}"
+        }
+      },
+      "name": "08 Проверить заявку",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        544
+      ],
+      "id": "27e31b1f-1931-4a04-be8c-0028e9a93baa"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mailpit:8025/api/v1/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({From:{Email:\"quality@example.test\"},To:[{Email:\"assistant@example.test\"}],Cc:[{Email:\"employee@example.test\"}],Subject:\"[RAG-\"+$json.request_id+\"] Ответ эксперта\",Text:$(\"02 Режим работы\").first().json.expert_answer}) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "name": "09 Отправить ответ эксперта",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        544
+      ],
+      "id": "a2302b53-5eb0-4ca1-820e-d560a509cea3"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"http://mailpit:8025/api/v1/search?limit=50&query=\" + encodeURIComponent(\"from:quality@example.test to:assistant@example.test subject:RAG-\" + $(\"02 Режим работы\").first().json.request_id) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "name": "10 Найти письмо эксперта",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        800
+      ],
+      "id": "55526ec7-269d-43df-85a7-922b20cc3702"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.first().json;\nconst id=$('02 Режим работы').first().json.request_id;\nconst messages=r.messages;\nif(!Array.isArray(messages)) throw Error('Неизвестный формат списка Mailpit');\nconst m=messages.find(m=>String(m.From?.Address??'').toLowerCase()==='quality@example.test' && m.Subject===`[RAG-${id}] Ответ эксперта` && (m.To??[]).some(a=>String(a.Address??'').toLowerCase()==='assistant@example.test'));\nif(!m) return [];\nreturn [{json:{message_id:m.ID,request_id:id}}];"
+      },
+      "name": "11 Проверить отправителя и тему",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        800
+      ],
+      "id": "a05dbb71-3789-4fef-86e2-83cd25e91df3"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"http://mailpit:8025/api/v1/message/\" + encodeURIComponent($json.message_id) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "name": "12 Прочитать письмо",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1776,
+        800
+      ],
+      "id": "3dff8dd3-7abf-44be-9894-1871132a76ae"
+    },
+    {
+      "parameters": {
+        "jsCode": "const m=$input.first().json;\nconst id=$('02 Режим работы').first().json.request_id;\nif(String(m.From?.Address??'').toLowerCase()!=='quality@example.test' || m.Subject!==`[RAG-${id}] Ответ эксперта` || !(m.To??[]).some(a=>String(a.Address??'').toLowerCase()==='assistant@example.test')) throw Error('Письмо не прошло проверку');\nconst answer=String(m.Text??'').trim();\nif(!answer || answer.length>2000) throw Error('Некорректный текст экспертного ответа');\nreturn [{json:{request_id:id,expert_answer:answer}}];"
+      },
+      "name": "13 Проверить текст разъяснения",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        800
+      ],
+      "id": "8befd253-5c74-4b90-88d7-8f9f973c6c44"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE rag_quality_outbox SET expert_answer=$2, status='answered', answered_at=now() WHERE request_id=$1 AND status='sent' RETURNING request_id,status,expert_answer,answered_at;",
+        "options": {
+          "queryReplacement": "={{ [$json.request_id,$json.expert_answer] }}"
+        }
+      },
+      "name": "14 Сохранить разъяснение",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2224,
+        800
+      ],
+      "id": "b58a44fe-0d87-4739-ad4e-71e471e4dce4"
+    },
+    {
+      "parameters": {
+        "content": "## Ручной тест\nВ ноде 02 выбираем send, reply или receive и номер заявки. В reply человек вводит текст. Mailpit — только тестовая почта, не внешний SMTP. Не публиковать.",
+        "height": 230,
+        "width": 630
+      },
+      "name": "Настройка",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "4123591b-7a99-4fda-8005-77e313c10faf"
+    },
+    {
+      "parameters": {
+        "content": "## Отправка\npending → sending → sent. При сбое sending остаётся для ручной сверки с Mailpit; автоматической повторной отправки нет. Копия сотруднику — тестовый адрес.",
+        "height": 230,
+        "width": 650
+      },
+      "name": "Отправка",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        688,
+        0
+      ],
+      "id": "fd6e97b7-9b56-4ef0-ad5d-2a2cdf0bb869"
+    },
+    {
+      "parameters": {
+        "content": "## Получение\nПроверка тестового отправителя, получателя, темы и номера заявки; письмо сохраняется только для sent. В production нужна аутентификация почты, подтверждение полномочий и обработка обычных ответов.",
+        "height": 230,
+        "width": 900
+      },
+      "name": "Получение",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        400
+      ],
+      "id": "d4d052b7-a83f-4fa4-b376-5ae65dc89b69"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "01 Ручной запуск": {
+      "main": [
+        [
+          {
+            "node": "02 Режим работы",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Режим работы": {
+      "main": [
+        [
+          {
+            "node": "03 Отправить заявку?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 Отправить заявку?": {
+      "main": [
+        [
+          {
+            "node": "04 Зарезервировать заявку",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "07 Тестовое письмо эксперта?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 Зарезервировать заявку": {
+      "main": [
+        [
+          {
+            "node": "05 Письмо в службу качества",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 Письмо в службу качества": {
+      "main": [
+        [
+          {
+            "node": "06 Отметить отправку",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 Тестовое письмо эксперта?": {
+      "main": [
+        [
+          {
+            "node": "08 Проверить заявку",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "10 Найти письмо эксперта",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08 Проверить заявку": {
+      "main": [
+        [
+          {
+            "node": "09 Отправить ответ эксперта",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "09 Отправить ответ эксперта": {
+      "main": [
+        [
+          {
+            "node": "10 Найти письмо эксперта",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10 Найти письмо эксперта": {
+      "main": [
+        [
+          {
+            "node": "11 Проверить отправителя и тему",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11 Проверить отправителя и тему": {
+      "main": [
+        [
+          {
+            "node": "12 Прочитать письмо",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12 Прочитать письмо": {
+      "main": [
+        [
+          {
+            "node": "13 Проверить текст разъяснения",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13 Проверить текст разъяснения": {
+      "main": [
+        [
+          {
+            "node": "14 Сохранить разъяснение",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
