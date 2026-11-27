@@ -261,51 +261,6 @@
     },
     {
       "parameters": {
-        "content": "## Ручной тест\nВ ноде 02 выбираем send, reply или receive и номер заявки. В reply человек вводит текст. Mailpit — только тестовая почта, не внешний SMTP. Не публиковать.",
-        "height": 230,
-        "width": 630
-      },
-      "name": "Настройка",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        0,
-        0
-      ],
-      "id": "4123591b-7a99-4fda-8005-77e313c10faf"
-    },
-    {
-      "parameters": {
-        "content": "## Отправка\npending → sending → sent. При сбое sending остаётся для ручной сверки с Mailpit; автоматической повторной отправки нет. Копия сотруднику — тестовый адрес.",
-        "height": 230,
-        "width": 650
-      },
-      "name": "Отправка",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        688,
-        0
-      ],
-      "id": "fd6e97b7-9b56-4ef0-ad5d-2a2cdf0bb869"
-    },
-    {
-      "parameters": {
-        "content": "## Получение\nПроверка тестового отправителя, получателя, темы и номера заявки; письмо сохраняется только для sent. В production нужна аутентификация почты, подтверждение полномочий и обработка обычных ответов.",
-        "height": 230,
-        "width": 900
-      },
-      "name": "Получение",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        1600,
-        336
-      ],
-      "id": "d4d052b7-a83f-4fa4-b376-5ae65dc89b69"
-    },
-    {
-      "parameters": {
         "rule": {
           "interval": [
             {
@@ -469,21 +424,6 @@
     },
     {
       "parameters": {
-        "content": "## Автоматический цикл Mailpit\nКаждую минуту: одна pending-заявка резервируется атомарно; ответ ищется для sent. Ошибка отправки оставляет sending для ручной сверки, чтобы не дублировать письма. Только локальные тестовые адреса. Не промышленная почта.",
-        "height": 192,
-        "width": 1250
-      },
-      "id": "18733822-4ede-4c90-a9ef-0a9042fd5dc6",
-      "name": "Автоматический цикл",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -400,
-        832
-      ]
-    },
-    {
-      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
@@ -547,6 +487,66 @@
         496,
         1536
       ]
+    },
+    {
+      "id": "4123591b-7a99-4fda-8005-77e313c10faf",
+      "name": "Настройка",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "content": "## Ручной тест (01–03)\nВ ноде 02: send, reply или receive + номер заявки. reply — имитация экспертного письма с заданным текстом. По умолчанию receive / 0. Ручные режимы только для диагностики; расписание активно. Mailpit — локальная тестовая почта, не реальная доставка.",
+        "height": 230,
+        "width": 630
+      }
+    },
+    {
+      "id": "fd6e97b7-9b56-4ef0-ad5d-2a2cdf0bb869",
+      "name": "Отправка",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        688,
+        0
+      ],
+      "parameters": {
+        "content": "## Ручная отправка (04–06)\npending → sending → sent. При неопределённом сбое sending остаётся для сверки с Mailpit; автоповтора нет. Копия на employee@example.test — имитация, не реальный адрес сотрудника. Основной маршрут отправки — автоматический.",
+        "height": 230,
+        "width": 650
+      }
+    },
+    {
+      "id": "d4d052b7-a83f-4fa4-b376-5ae65dc89b69",
+      "name": "Получение",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        336
+      ],
+      "parameters": {
+        "content": "## Ручная проверка и приём (07–14)\nreply имитирует отправителя quality@example.test. receive ищет письмо по номеру заявки; проверяет тему, отправителя, получателя и текст. Запись только для sent → answered. В production нужна проверка полномочий, аутентификация почты и обработка обычных ответов. Тестовые разъяснения удалить после демонстрации.",
+        "height": 230,
+        "width": 900
+      }
+    },
+    {
+      "id": "18733822-4ede-4c90-a9ef-0a9042fd5dc6",
+      "name": "Автоматический цикл",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        832
+      ],
+      "parameters": {
+        "content": "## 15–24 · Автоматический цикл (активен)\nКаждую минуту две ветки: атомарное резервирование одной pending-заявки → отправка → sent; поиск писем для sent → проверка → answered. IF защищают пустую очередь. Неопределённый сбой оставляет sending для ручной сверки. Подтверждены автоматические запуски №101 и №144 (заявка 143). Mailpit только локальный.",
+        "height": 192,
+        "width": 1250
+      }
     }
   ],
   "connections": {
