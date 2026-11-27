@@ -5,8 +5,11 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "corporate-qa-v3",
+        "authentication": "headerAuth",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {
+          "allowedOrigins": "null,https://n8n.24lon8n.ru"
+        }
       },
       "name": "01 Webhook",
       "type": "n8n-nodes-base.webhook",
